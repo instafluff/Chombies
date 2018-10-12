@@ -1,0 +1,725 @@
+{% extends 'layout.twig' %}
+
+{% block body %}
+	<div id="chatteroids"></div>
+	<script>
+		var Width = 1200, Height = 800;
+
+		var config = {
+			type: Phaser.AUTO,
+			width: Width,
+			height: Height,
+			// backgroundColor: "7F3300",
+    	transparent: true,
+			parent: 'chatteroids',
+			physics: {
+					default: 'arcade',
+					arcade: {
+							// debug: true,
+							// gravity: { y: 200 }
+					}
+			},
+			scene: {
+					preload: preload,
+					create: create,
+					update: update
+			}
+		};
+
+		var game = new Phaser.Game(config);
+		var graphics;
+		var debug = false;
+		var phaser = undefined;
+		var collisions;
+		var colliders = {};
+		var balls = {};
+		var winners = {};
+		var refreshTimer = null;
+		const PI = 3.1415926535;
+		var botVelocity = 300;
+		var turnSpeed = PI;
+		var maxAngle = 60 * ( 2 * PI / 360 );
+		var monsterVelocity = 250;
+		var zomVelocity = 200;
+		var monsterTurnSpeed = PI * 0.75;
+		var lastBotUpdateTime = 0;
+		var line;
+		var numCollisions = 0;
+		var timePassedInMinutes = 0;
+		var collisionText;
+		var net = new brain.NeuralNetwork();
+		var trainData = [];
+		var trainMax = 1000;
+
+		var munchieGroup;
+		var munchies = [];
+		var numMunchies = 30;
+		var pikaState = "idle"; // "idle", "left", "right"
+		var previousRayVals = -1;
+		var refreshTimer = null;
+		var chombieHasStarted = false;
+
+		function kirbyCompute( monster, rayVals ) {
+			var rayMax = 0;
+			var numCasts = rayVals.length;
+			for( var i = 0; i < numCasts; i++ ) {
+				var factor = i / ( numCasts - 1 );
+				var mid = ( numCasts - 1 ) / 2;
+				var change = ( mid - Math.abs( i - mid ) ) / mid;
+				rayMax += 250 * change + 150;
+			}
+
+			var total = 0, leftTotal = 0, rightTotal = 0;
+			for( var i = 0, len = rayVals.length / 2; i < len; i++ ) {
+				leftTotal += rayVals[ i ];
+			}
+			for( var i = Math.floor( rayVals.length / 2 ), len = rayVals.length; i < len; i++ ) {
+				rightTotal += rayVals[ i ];
+			}
+			total = rayVals.reduce( (a, b) => a + b );
+			// console.log( "left: " + leftTotal );
+			// console.log( "right: " + rightTotal );
+			var monsterState = "wander";
+			if( total > 0 && total < rayMax - 10 ) {
+				if( total < rayMax / 2 ) {
+					monsterState = "left";
+				}
+				else if( leftTotal > rightTotal ) {
+					monsterState = "left";
+				}
+				else {
+					monsterState = "right";
+				}
+			}
+			else {
+				monsterState = "wander";
+				return 9000;
+			}
+
+			previousRayVals = total;
+			switch( monsterState ) {
+				case "left":
+					return -90;
+				case "right":
+					return 90;
+				case "idle":
+				default:
+					return 0;
+			}
+		}
+
+		function monsterCompute( monster, rayVals ) {
+			var rayMax = 0;
+			var numCasts = rayVals.length;
+			for( var i = 0; i < numCasts; i++ ) {
+				var factor = i / ( numCasts - 1 );
+				var mid = ( numCasts - 1 ) / 2;
+				var change = ( mid - Math.abs( i - mid ) ) / mid;
+				rayMax += 250 * change + 150;
+			}
+
+			var total = 0, leftTotal = 0, rightTotal = 0;
+			for( var i = 0, len = rayVals.length / 2; i < len; i++ ) {
+				leftTotal += rayVals[ i ];
+			}
+			for( var i = Math.floor( rayVals.length / 2 ), len = rayVals.length; i < len; i++ ) {
+				rightTotal += rayVals[ i ];
+			}
+			total = rayVals.reduce( (a, b) => a + b );
+			// console.log( "left: " + leftTotal );
+			// console.log( "right: " + rightTotal );
+			var monsterState = "wander";
+			if( total > 0 && total < rayMax - 10 ) {
+				if( total < rayMax / 2 ) {
+					monsterState = "idle";
+				}
+				else if( leftTotal > rightTotal ) {
+					monsterState = "right";
+				}
+				else {
+					monsterState = "left";
+				}
+			}
+			else {
+				monsterState = "wander";
+				return 9000;
+			}
+
+			previousRayVals = total;
+			switch( monsterState ) {
+				case "left":
+					return -90;
+				case "right":
+					return 90;
+				case "idle":
+				default:
+					return 0;
+			}
+		}
+
+		function aiCompute( rayVals ) {
+			var rayMax = 0;
+			var numCasts = rayVals.length;
+			for( var i = 0; i < numCasts; i++ ) {
+				var factor = i / ( numCasts - 1 );
+				var mid = ( numCasts - 1 ) / 2;
+				var change = ( mid - Math.abs( i - mid ) ) / mid;
+				rayMax += 200 * change + 100;
+			}
+
+			var total = 0, leftTotal = 0, rightTotal = 0;
+			for( var i = 0, len = rayVals.length / 2; i < len; i++ ) {
+				leftTotal += rayVals[ i ];
+			}
+			for( var i = Math.floor( rayVals.length / 2 ), len = rayVals.length; i < len; i++ ) {
+				rightTotal += rayVals[ i ];
+			}
+			total = rayVals.reduce( (a, b) => a + b );
+			// console.log( "left: " + leftTotal );
+			// console.log( "right: " + rightTotal );
+			if( total > 0 && total < rayMax - 10 ) {
+
+				if( total < rayMax / 2 ) { // Too close to everything so try and turn left
+					pikaState = "left";
+				}
+				else if( leftTotal > rightTotal ) {
+					pikaState = "left";
+				}
+				else {
+					pikaState = "right";
+				}
+			}
+			else {
+				pikaState = "idle";
+			}
+
+			previousRayVals = total;
+			switch( pikaState ) {
+				case "left":
+					return -90;
+				case "right":
+					return 90;
+				case "idle":
+				default:
+					return 0;
+			}
+		}
+
+		function aiComputeSim( index ) {
+			var monsters = [];
+			for( ball in balls ) {
+				var obj = balls[ ball ];
+				monsters.push({
+					x: obj.object.x,
+					y: obj.object.y,
+					vx: obj.object.body.velocity.x,
+					vy: obj.object.body.velocity.y,
+				});
+			}
+			var rays = rayPika( munchies[ index ], monsters, 0, 0.0 );
+			var raySum = rays.reduce( (a, b) => a + b );
+			var scorePreSim = {
+				left45: raySum,
+				straight: raySum,
+				right45: raySum,
+			}
+			monsters = simulate( monsters, 0.15 );
+			var scores = {
+				left45: scorePreSim[ "left45" ] * -1 + rayPika( munchies[ index ], monsters, -PI / 2, 0.15 ).reduce( (a, b) => a + b ),
+				straight: scorePreSim[ "straight" ] * -1 + rayPika( munchies[ index ], monsters, 0, 0.15 ).reduce( (a, b) => a + b ),
+				right45: scorePreSim[ "right45" ] * -1 + rayPika( munchies[ index ], monsters, PI / 2, 0.15 ).reduce( (a, b) => a + b ),
+			}
+			console.log( scores );
+			var maxScore = Object.keys( scores ).reduce( (a, b) => ( scores[ a ] > scores[ b ] ? a : b ) );
+			console.log( maxScore );
+			if( Object.keys( balls ).length > 10 ) {
+				// console.log( rays.map( x => x / 1000 ) );
+				var normalizedScores = Object.keys( scores ).map( x => scores[ x ] / 10000 + 0.5 );
+				console.log( normalizedScores );
+				// trainData.push( {
+				// 	input: normalizedScores,//rays.map( x => x / 1000 ),
+				// 	output: { [maxScore]: 1 }
+				// });
+			}
+			if( trainData.length >= trainMax ) {
+				var sample = getRandomSubset( trainData, 300 );
+				net.train( sample, {
+					log: ( x => console.log( x ) )
+				} );
+				// console.log( waaa.waa.waa );
+			}
+			switch( maxScore ) {
+				case "left45": return -90;
+				case "straight": return 0;
+				case "right45": return 90;
+				default: return 0;
+			}
+		}
+
+		function aiComputeNN( index ) {
+			var monsters = [];
+			for( ball in balls ) {
+				var obj = balls[ ball ];
+				monsters.push({
+					x: obj.object.x,
+					y: obj.object.y,
+					vx: obj.object.body.velocity.x,
+					vy: obj.object.body.velocity.y,
+				});
+			}
+			var rays = rayPika( munchies[ index ], monsters, 0, 0.0 );
+			var raySum = rays.reduce( (a, b) => a + b );
+			var scorePreSim = {
+				left45: raySum,
+				straight: raySum,
+				right45: raySum,
+			}
+			monsters = simulate( monsters, 0.15 );
+			var scores = {
+				left45: scorePreSim[ "left45" ] * -1 + rayPika( munchies[ index ], monsters, -PI / 2, 0.15 ).reduce( (a, b) => a + b ),
+				straight: scorePreSim[ "straight" ] * -1 + rayPika( munchies[ index ], monsters, 0, 0.15 ).reduce( (a, b) => a + b ),
+				right45: scorePreSim[ "right45" ] * -1 + rayPika( munchies[ index ], monsters, PI / 2, 0.15 ).reduce( (a, b) => a + b ),
+			}
+			var normalizedScores = Object.keys( scores ).map( x => scores[ x ] / 10000 + 0.5 );
+			var output = net.run( normalizedScores );// rays.map( x => x / 1000 ) );
+			var calculated = Object.keys( output ).reduce( (a, b) => output[ a ] > output[ b ] ? a : b );
+			console.log( calculated );
+			switch( calculated ) {
+				case "left45": return -90;
+				case "straight": return 0;
+				case "right45": return 90;
+				default: return 0;
+			}
+		}
+
+		function rayPika( pikaBot, monsters, angle, timestep ) {
+			angle *= timestep * turnSpeed;
+			var pika = {
+				x: pikaBot.x + botVelocity * Math.cos( pikaBot.dir + angle ) * timestep,
+				y: pikaBot.y + botVelocity * Math.sin( pikaBot.dir + angle ) * timestep
+			};
+			var rayVals = [];
+			var numCasts = 11;
+			for( var i = 0; i < numCasts; i++ ) {
+				var factor = i / ( numCasts - 1 );
+				var mid = ( numCasts - 1 ) / 2;
+				var change = ( mid - Math.abs( i - mid ) ) / mid;
+				rayVals.push( botRaycast( monsters, pika.x, pika.y, pikaBot.dir + angle - PI / 2 + factor * PI, 200 * change + 100 ) );
+			}
+			return rayVals;
+		}
+
+		function simulate( monsters, timestep ) {
+			var newBalls = [];
+			for( var i = 0, len = monsters.length; i < len; i++ ) {
+				var ball = monsters[ i ];
+				ball.x += ball.vx * timestep;
+				ball.y += ball.vy * timestep;
+				newBalls.push( ball );
+			}
+			return newBalls;
+		}
+
+		function preload ()
+		{
+			this.load.image('moon0', 'images/kirbie.png');
+			this.load.image('moon1', 'images/kirbie.png');
+			this.load.image('moon2', 'images/kirbie.png');
+			this.load.image('moon3', 'images/kirbie.png');
+			this.load.image('moon4', 'images/kirbie.png');
+			this.load.image('moon5', 'images/kirbie.png');
+			this.load.image('wizball', 'images/chombie.png');
+			this.load.image('peg', 'images/peg.png');
+			this.load.image('wall', 'images/wall.png');
+			this.load.image('star', 'images/star.png');
+		}
+
+		function create ()
+		{
+			phaser = this;
+			graphics = this.add.graphics({ lineStyle: { width: 4, color: 0xaa00aa } });
+			this.game.antialias = true;
+			this.game.clearBeforeRender = true;
+			var instructions = this.add.text( 1000, 20, "!kirby" );
+			instructions.setScale( 2 );
+			collisionText = this.add.text( 400, 200, "Collisions: 0" );
+			collisionText.setScale( 2 );
+			console.log( collisionText );
+			startGame();
+			// for( var i = 0; i < 1; i++ ) {
+			// 	addUser( "test_" + i );
+			// }
+			$("#chatteroids").show();
+			numCollisions = 0;
+		}
+
+		function botRaycast( monsters, pX, pY, angle, maxRayLength = 300, ignoreWalls = false ) {
+			if( pX <= 0 || pX >= Width ) return 0;
+			if( pY <= 0 || pY >= Height ) return 0;
+			var dX = Math.cos( angle ), dY = Math.sin( angle );
+			var pX1 = pX + dX * maxRayLength, pY1 = pY + dY * maxRayLength;
+			if( !line ) {
+				line = new Phaser.Geom.Line( pX, pY, pX1, pY1 );
+			}
+			var closestMarbleDist = maxRayLength * 2;
+			for( var marble in monsters ) {
+				var marbleObj = monsters[ marble ];
+				var distToMarble = distToSegment( { x: marbleObj.x, y: marbleObj.y }, { x: pX, y: pY }, { x: pX1, y: pY1 } );
+				var circle = new Phaser.Geom.Circle( marbleObj.x, marbleObj.y, 32 );
+				// graphics.strokeCircleShape(circle);
+				if( distToMarble < 32 ) {
+					// Intersected!
+					var cX = marbleObj.x, cY = marbleObj.y;
+					var vX = cX - pX, vY = cY - pY;
+					var vLen = Math.sqrt( vX * vX + vY * vY ) - 32;
+					// graphics.strokeCircleShape(circle);
+					if( vLen < closestMarbleDist ) {
+						closestMarbleDist = vLen;
+					}
+				}
+			}
+			if( closestMarbleDist < maxRayLength ) {
+				if( debug ) {
+					var appxX = pX + dX * closestMarbleDist, appxY = pY + dY * closestMarbleDist;
+					line.setTo( pX, pY, appxX, appxY );
+					graphics.strokeLineShape( line );
+				}
+				return closestMarbleDist;
+			}
+			// console.log( "no intersect" );
+			if( ignoreWalls ) {
+				return maxRayLength;
+			}
+			// Check against walls
+			if( pX1 < 0 ) {
+				var y = pY - ( dY / dX ) * pX;
+				var distToWall = Math.sqrt( pX * pX + ( y - pY ) * ( y - pY ) );
+				if( debug ) {
+					line.setTo( pX, pY, pX + dX * distToWall, pY + dY * distToWall );
+					graphics.strokeLineShape( line );
+				}
+				return distToWall;
+			}
+			if( pX1 > Width ) {
+				var x = Width - pX;
+				var y = pY - ( dY / dX ) * x;
+				var distToWall = Math.sqrt( x * x + ( y - pY ) * ( y - pY ) );
+				if( debug ) {
+					line.setTo( pX, pY, pX + dX * distToWall, pY + dY * distToWall );
+					graphics.strokeLineShape( line );
+				}
+				return distToWall;
+			}
+			if( pY1 < 0 ) {
+				var y = pX - ( dX / dY ) * pY;
+				var distToWall = Math.sqrt( pY * pY + ( y - pX ) * ( y - pX ) );
+				if( debug ) {
+					line.setTo( pX, pY, pX + dX * distToWall, pY + dY * distToWall );
+					graphics.strokeLineShape( line );
+				}
+				return distToWall;
+			}
+			if( pY1 > Height ) {
+				var y = pX - ( dX / dY ) * ( Height - pY );
+				var distToWall = Math.sqrt( ( Height - pY ) * ( Height - pY ) + ( y - pX ) * ( y - pX ) );
+				if( debug ) {
+					line.setTo( pX, pY, pX + dX * distToWall, pY + dY * distToWall );
+					graphics.strokeLineShape( line );
+				}
+				return distToWall;
+			}
+			if( debug ) {
+				line.setTo( pX, pY, pX1, pY1 );
+				graphics.strokeLineShape( line );
+			}
+			return maxRayLength;
+		}
+
+		function botTurn( pikaBot, angle ) {
+			var angleRads = angle * ( 2 * PI / 360 );
+			if( angleRads < -maxAngle ) {
+				angleRads = -maxAngle;
+			}
+			if( angleRads > maxAngle ) {
+				angleRads = maxAngle;
+			}
+			pikaBot.dir += angleRads;
+			if( pikaBot.dir < -PI * 2 ) {
+				pikaBot.dir += PI * 2;
+			}
+			if( pikaBot.dir > PI * 2 ) {
+				pikaBot.dir -= PI * 2;
+			}
+		}
+
+		function update(time, delta) {
+			timePassedInMinutes += delta / 1000 / 60;
+			var collisionsPerMinute = ( numCollisions / timePassedInMinutes ).toFixed( 2 );
+			var pokemaster = "";
+			if( Object.keys( winners ).length > 0 ) {
+				pokemaster = Object.keys( winners ).reduce( (a, b) => winners[ a ] > winners[ b ] ? a : b );
+			}
+			var scoreLeaders = Object.keys( winners );
+			scoreLeaders.sort( (a, b) => winners[ a ] > winners[ b ] ? -1 : 1 );
+			var leaderboard = scoreLeaders.map(x => x + " (" + winners[ x ] + ")" );
+			collisionText.setText( leaderboard.slice( 0, 10 ).join( "\n" ) );
+			// collisionText.setText( "monsters: " + Object.keys( balls ).length + "\nCookieMonster: " + pokemaster + "(" + winners[ pokemaster ] + ")\nTime: " + timePassedInMinutes.toFixed( 2 ) + "\nCollisions / Min: " + collisionsPerMinute );
+			if( time - 100 > lastBotUpdateTime ) {
+				graphics.clear();
+				var timeFactor = 0.001 * ( time - lastBotUpdateTime );//0.05;
+				// console.log( timeFactor );
+				var monsters = Object.values(balls).map( m => ({
+					name: m.object.name,
+					x: m.object.x,
+					y: m.object.y,
+					vx: m.object.body.velocity.x,
+					vy: m.object.body.velocity.y,
+					dir: m.dir,
+					isZombie: m.isZombie
+				}));
+				for( var index = 0; index < munchies.length; index++ ) {
+					var rayVals = [];
+					var numCasts = 11;
+					for( var i = 0; i < numCasts; i++ ) {
+						var factor = i / ( numCasts - 1 );
+						var mid = ( numCasts - 1 ) / 2;
+						var change = ( mid - Math.abs( i - mid ) ) / mid;
+						rayVals.push( botRaycast( monsters, munchies[ index ].x, munchies[ index ].y, munchies[ index ].dir - PI / 2 + factor * PI, 250 * change + 150 ) );
+					}
+					// var turnAngle = aiCompute( rayVals );
+					var turnAngle;
+					if( trainData.length < trainMax ) {
+						 turnAngle = aiComputeSim( index );
+					}
+					else {
+						turnAngle = aiComputeNN( index );
+					}
+					botTurn( munchies[ index ], turnAngle * turnSpeed * timeFactor );
+					munchies[ index ].setVelocity( botVelocity * Math.cos( munchies[ index ].dir ), botVelocity * Math.sin( munchies[ index ].dir ) );
+					// bot.setVelocity( 0, 0 );
+					munchies[ index ].setAngle( 270 + munchies[ index ].dir * ( 360 / ( 2 * PI ) ) );
+				}
+
+				// Update Monsters!
+				var cookies = munchies.map( m => ({
+					x: m.x,
+					y: m.y,
+					vx: m.body.velocity.x,
+					vy: m.body.velocity.y,
+				}));
+				var zombies = monsters.filter( m => m.isZombie );
+				var kirbies = monsters.filter( m => !m.isZombie );
+				for( var index = 0, len = monsters.length; index < len; index++ ) {
+					var cookieRays = [];
+					var numCasts = 9;
+					for( var i = 0; i < numCasts; i++ ) {
+						var factor = i / ( numCasts - 1 );
+						var mid = ( numCasts - 1 ) / 2;
+						var change = ( mid - Math.abs( i - mid ) ) / mid;
+						var thingsItSees = monsters[ index ].isZombie ? kirbies : [];
+						if( !monsters[ index ].isZombie ) {
+							thingsItSees = monsters.filter( m => m != monsters[ index ] );
+						}
+						cookieRays.push( botRaycast( thingsItSees, monsters[ index ].x, monsters[ index ].y, monsters[ index ].dir - PI / 2 + factor * PI, 200 * change + 100, true ) );
+					}
+					var turnAngle = 0;
+					if( monsters[ index ].isZombie ) {
+						turnAngle = monsterCompute( monsters[ index ], cookieRays );
+					}
+					else {
+						turnAngle = kirbyCompute( monsters[ index ], cookieRays );
+					}
+					botTurn( balls[ monsters[ index ].name ], turnAngle * monsterTurnSpeed * timeFactor );
+					var speed = monsters[ index ].isZombie ? zomVelocity : monsterVelocity;
+					balls[ monsters[ index ].name ].object.setVelocity( speed * Math.cos( monsters[ index ].dir ), speed * Math.sin( monsters[ index ].dir ) );
+					// bot.setVelocity( 0, 0 );
+					balls[ monsters[ index ].name ].object.setAngle( 270 + monsters[ index ].dir * ( 360 / ( 2 * PI ) ) );
+				}
+				lastBotUpdateTime = time;
+			}
+
+			for( var marble in balls ) {
+				var marbleObj = balls[ marble ];
+				marbleObj.text.x = marbleObj.object.x;
+				marbleObj.text.y = marbleObj.object.y - 35;
+			}
+		}
+
+		function startGame() {
+			collisions = phaser.physics.add.group({
+				// bounceX: 0.95, bounceY: 0.6,
+				bounceX: 1, bounceY: 1,
+				collideWorldBounds: true
+			});
+			munchieGroup = phaser.physics.add.group({
+				bounceX: 1, bounceY: 1,
+				collideWorldBounds: true
+			});
+		}
+
+		function addUser( username, isZombie = false ) {
+			if( !balls[ username ] ) {
+				numCollisions = 0;
+				timePassedInMinutes = 0;
+				var dropPosition = getRandomInt(768);
+				// var userMarble = phaser.physics.add.image(dropPosition, 65, 'wizball');
+				// var userMarble = collisions.create(dropPosition, -165, 'moon');
+				var userMarble = collisions.create(450, 380, isZombie ? 'wizball' : ( 'moon' + getRandomInt( 6 ) ));
+				var userText = phaser.add.text(dropPosition, -190, username);
+				userText.setOrigin( 0.5 );
+				userMarble.name = username;
+				userMarble.setCircle(32);
+				userMarble.setDrag( 0, 0 );
+				userMarble.body.allowDrag = false;
+				// userMarble.body.stopVelocityOnCollide = false;
+				userMarble.allowRotation = true;
+				// userMarble.setMass( 10 );
+				// userMarble.setCollideWorldBounds(true);
+				userMarble.setBounce(1);
+				userMarble.setVelocity(getRandomInt(600)-300, getRandomInt(200));
+				// userMarble.setVelocity(0, 0);
+				colliders[ username ] = phaser.physics.add.collider(userMarble, collisions, (kirbie1, kirbie2) => {
+					//
+					var k1 = balls[ kirbie1.name ];
+					var k2 = balls[ kirbie2.name ];
+					if( k1.isZombie && !k2.isZombie ) {
+						k2.isZombie = true;
+						k2.object.setTexture('wizball', 0);
+						console.log( kirbie2.name + " is chombified!" );
+						winners[ kirbie2.name ] = timePassedInMinutes;
+					}
+					if( !k1.isZombie && k2.isZombie ) {
+						k1.isZombie = true;
+						k1.object.setTexture('wizball', 0);
+						console.log( kirbie1.name + " is chombified!" );
+						winners[ kirbie1.name ] = timePassedInMinutes;
+					}
+
+					// console.log( "Collision!", kirbie1.name, kirbie2.name );
+				});
+				// phaser.physics.add.collider(userMarble, walls, (marble, block) => {
+				// 	if( !marble.body.isMoving && marble.y < block.y ) {
+				// 		marble.setVelocity( getRandomInt( 200 ) - 100, -20 );
+				// 	}
+				// });
+				// phaser.physics.add.collider(userMarble, blocks, (marble, block) => {
+				// 	if( !marble.body.isMoving && marble.y < block.y ) {
+				// 		marble.setVelocity( ( getRandomInt( 100 ) + 20 ) * ( marble.x < block.x ? -1 : 1 ), -100 );
+				// 	}
+				// });
+				phaser.physics.add.collider( userMarble, munchieGroup, ( marble, pika ) => {
+					numCollisions++;
+					console.log( marble.name + " ate a cookie!" );
+					winners[ marble.name ] = ( winners[ marble.name ] || 0 ) + 1;
+					for( var i = 0, len = munchies.length; i < len; i++ ) {
+						if( munchies[ i ] == pika ) {
+							pika.destroy();
+							munchies.splice( i, 1 );
+							break;
+						}
+					}
+					if( munchies.length == 0 ) {
+						if( refreshTimer ) {
+							clearTimeout( refreshTimer );
+						}
+						refreshTimer = setTimeout(() => {
+							location.reload();
+						}, 60000);
+					}
+				});
+				balls[ username ] = {
+					text: userText,
+					object: userMarble,
+					dir: 0,
+					isZombie: isZombie
+				}
+			}
+		}
+
+		function getRandomInt(max) {
+		  return Math.floor(Math.random() * Math.floor(max));
+		}
+
+		function getRandomSubset(arr, n) {
+	    var result = new Array(n),
+	        len = arr.length,
+	        taken = new Array(len);
+	    if (n > len)
+	        throw new RangeError("getRandom: more elements taken than available");
+	    while (n--) {
+	        var x = Math.floor(Math.random() * len);
+	        result[n] = arr[x in taken ? taken[x] : x];
+	        taken[x] = --len in taken ? taken[len] : len;
+	    }
+	    return result;
+	}
+
+		function sqr(x) { return x * x }
+		function dist2(v, w) { return sqr(v.x - w.x) + sqr(v.y - w.y) }
+		function distToSegmentSquared(p, v, w) {
+		  var l2 = dist2(v, w);
+		  if (l2 == 0) return dist2(p, v);
+		  var t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+		  t = Math.max(0, Math.min(1, t));
+		  return dist2(p, { x: v.x + t * (w.x - v.x),
+		                    y: v.y + t * (w.y - v.y) });
+		}
+		function distToSegment(p, v, w) { return Math.sqrt(distToSegmentSquared(p, v, w)); }
+
+		var client = null;
+
+		$( document ).ready(function() {
+			$("#chatteroids").hide();
+
+			var options = {
+				options: {
+					debug: false
+				},
+				connection: {
+					reconnect: true,
+				},
+				identity: {
+					username: "{{ username }}",
+				    password: "{{ oauth }}"
+				},
+				channels: ["#{{ username }}"]
+			};
+
+			client = new tmi.client(options);
+
+			// Connect the client to the server..
+			client.connect();
+
+			client.on("chat", function (channel, userstate, message, self) {
+				if( ( userstate.mod || ( "#" + userstate.username == channel ) ) && ( message == "!chombie" || message == "!zombie" ) ) {
+					addUser( "Chombie-NomNom", true );
+					chombieHasStarted = true;
+				}
+				if( message == "!boost" ) {
+					if( balls[ userstate[ "display-name" ] ] ) {
+						var pokeball = balls[ userstate[ "display-name" ] ];
+						var speed = Math.sqrt( pokeball.object.body.velocity.x * pokeball.object.body.velocity.x +
+							pokeball.object.body.velocity.y * pokeball.object.body.velocity.y );
+						var dX = pokeball.object.body.velocity.x / speed;
+						var dY = pokeball.object.body.velocity.y / speed;
+						pokeball.object.setVelocity(
+							pokeball.object.body.velocity.x + dX * 100,
+							pokeball.object.body.velocity.y + dY * 100
+						);
+					}
+				}
+				if( !chombieHasStarted && message == "!kirby" ) {
+					addUser( userstate["display-name"] );
+
+					$("#chatteroids").show();
+					if( refreshTimer ) {
+						clearTimeout( refreshTimer );
+					}
+					// refreshTimer = setTimeout(() => {
+					// 	location.reload();
+					// }, 120000);
+				}
+			});
+		});
+	</script>
+{% endblock %}
